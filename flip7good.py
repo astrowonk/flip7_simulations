@@ -93,7 +93,7 @@ class BasePlayer:
 
     def __init__(self):
         self.cards = set()
-        self.unique_hash = token_urlsafe(4)
+        self.unique_hash = token_urlsafe(8)
 
     def deal(self, card):
         if self.stopped:
@@ -236,6 +236,8 @@ class ExpectedPlayer(BasePlayer):
         self.leader_gap = leader_gap
 
     def decide_hit(self, game):
+        if len(self.cards) == 0:
+            return True
         res = self.compute_expected_value(game.deck)
         threshold = self.threshold
         if game.check_late_game() and (self.check_leader(game) <= self.leader_gap):
@@ -359,11 +361,23 @@ class Game:
             self.round_data.extend(self.play_round())
             if i > 50:
                 break
-        while (
-            Counter([val['score'] for val in self.player_scores.values()]).most_common()[0][1]
-            > 1
-        ):
+
+        scores = {str(player): data['score'] for player, data in self.player_scores.items()}
+
+        #  print('GAME FINISHED:', scores)
+        i = 0
+        while True:
+            i += 1
+            scores = [d['score'] for d in self.player_scores.values()]
+            max_score = max(scores)
+
+            if scores.count(max_score) == 1:
+                break
+            #   print('TIE BREAK', scores)
+
             # break ties
+            if i > 20:
+                break
             self.round_data.extend(self.play_round())
 
     def check_late_game(self):

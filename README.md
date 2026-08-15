@@ -12,5 +12,12 @@ player_list = [
 ]
 
 out, round_data = simulate_parallel(Game,10000,workers=10,player_list=player_list)
-table_from_out(out)
+table_from_out(out) #requries polars and great_tablesß
 ```
+
+Bot styles:
+
+- PointThresholdPlayer - In every round stops when points >= a specific threshold
+- ExpectedPlayer - Using full deck knowledge (e.g. card counting), hit only when expected value > threshold. Dynamic settings can loosen the threshold when late in a game.
+- CardThresholdPlayer - hits until >= a fixed card limit
+- CheaterPlayer - knows next card by peeking at the Deck. Never busts.
