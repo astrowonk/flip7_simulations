@@ -3,10 +3,21 @@ from __future__ import annotations
 import random
 from collections import Counter, defaultdict
 from secrets import token_urlsafe
+from concurrent.futures import ProcessPoolExecutor
+
 
 from tqdm.autonotebook import tqdm
 
 norm_cards = {str(x) for x in range(13)}
+import polars as pl
+
+
+def rate_error(col, col_count):
+    return 1.96 * (pl.col(col) * (1 - pl.col(col)) / pl.col(col_count)).sqrt()
+
+
+def pipe_rate_error(_df: pl.LazyFrame | pl.DataFrame, col, col_count):
+    return _df.with_columns(rate_error(col, col_count).alias(f'{col}_error'))
 
 
 def get_value(card):
@@ -87,7 +98,7 @@ class BasePlayer:
     def deal(self, card):
         if self.stopped:
             return
-        if card in self.cards:
+        if card in self.cards.intersection(norm_cards):
             if 'second_chance' in self.cards:
                 self.cards.remove('second_chance')
                 return
@@ -161,9 +172,8 @@ class BasePlayer:
 
 class SimplePlayer(BasePlayer):
     def __init__(self, threshold=25):
-        self.cards = set()
+        super().__init__()
         self.threshold = threshold
-        self.unique_hash = token_urlsafe(4)
 
     def __repr__(self):
         return f'Point Threshold {self.threshold} {self.unique_hash}'
@@ -193,7 +203,6 @@ class CardThreshold(BasePlayer):
     def __init__(self, threshold=4):
         self.cards = []
         self.threshold = threshold
-        self.unique_hash = token_urlsafe(4)
 
     def __repr__(self):
         return f'Card Limit {self.threshold} {self.unique_hash}'
@@ -217,6 +226,20 @@ class ExpectedPlayer(BasePlayer):
         if res['expected_value'] > self.threshold:
             return True
         return False
+
+
+class Cheater(BasePlayer):
+    def __init__(self):
+        super().__init__()
+
+    def __repr__(self):
+        return f'Cheater {self.unique_hash}'
+
+    def decide_hit(self, deck):
+        assert deck, 'deck must not be empty'
+        if deck.cards[-1] in self.cards.intersection(norm_cards):
+            return False
+        return True
 
 
 class Smartish(BasePlayer):
@@ -254,16 +277,15 @@ class Game:
     def __init__(self, player_list: list[BasePlayer]):
         self.player_list = player_list
         self.round_data = []
+        self.scoreboard = {str(x): 0 for x in player_list}
 
     def prep_game(self):
         self.player_scores = {player: defaultdict(int) for player in self.player_list}
-        for player in self.player_list:
-            player.new_round()
         self.deck = Deck()
         self.round_num = 1
         self.round_data = []
 
-    def round(self, i=0):
+    def play_round(self):
 
         while not all(p.stopped for p in self.player_scores.keys()):
             if any(p.flip7 for p in self.player_scores.keys()):
@@ -312,7 +334,7 @@ class Game:
             score < 200 for score in [val['score'] for val in self.player_scores.values()]
         ):
             i += 1
-            self.round_data.extend(self.round())
+            self.round_data.extend(self.play_round())
             if i > 50:
                 break
         while (
@@ -320,7 +342,7 @@ class Game:
             > 1
         ):
             # break ties
-            self.round_data.extend(self.round())
+            self.round_data.extend(self.play_round())
 
     def simulate(self, n=100, save_round_data=False):
         out = []
@@ -344,3 +366,103 @@ class Game:
                     round['game'] = i
                 all_round_data.extend(round_data)
         return out, all_round_data
+
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import random
+
+
+def _play_one(game_cls, game_args, game_kwargs, game_index, save_round_data, seed):
+    random.seed(seed)
+
+    game = game_cls(*game_args, **game_kwargs)
+    game.play_game()
+
+    out = [
+        {
+            'name': str(key),
+            'score': val['score'],
+            'game': game_index,
+            'busted': val['busted'],
+            'rounds': val['rounds'],
+        }
+        for key, val in game.player_scores.items()
+    ]
+
+    round_data = []
+
+    if save_round_data:
+        round_data = [r.copy() for r in game.round_data]
+        for r in round_data:
+            r['game'] = game_index
+
+    return out, round_data
+
+
+def simulate_parallel(
+    game_cls,
+    n=100,
+    workers=8,
+    save_round_data=False,
+    *game_args,
+    **game_kwargs,
+):
+    out = []
+    all_round_data = []
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(
+                _play_one,
+                game_cls,
+                game_args,
+                game_kwargs,
+                i,
+                save_round_data,
+                random.randrange(2**63),
+            )
+            for i in range(n)
+        ]
+
+        with tqdm(total=n) as pbar:
+            for future in as_completed(futures):
+                game_out, round_data = future.result()
+
+                out.extend(game_out)
+                all_round_data.extend(round_data)
+
+                pbar.update(1)
+
+    return out, all_round_data
+
+
+def table_from_out(out):
+    return (
+        pl
+        .DataFrame(out)
+        .with_columns(rank=pl.col('score').rank(descending=True).over('game'))
+        .with_columns(
+            winner=pl.col('score').eq(pl.col('score').max().over(pl.col('game'))),
+        )
+        .group_by('name')
+        .agg(
+            pl.col('winner').mean(),
+            pl.col('rank').mean(),
+            pl.col('rank').mode().first().alias('rank_mode'),
+            # pl.col('winner').std().alias('std_winner'),
+            pl.col('score').mean(),
+            pl.col('score').std().alias('std_score'),
+            pl.col('busted').sum(),
+            pl.col('rounds').sum(),
+            pl.col('game').count().alias('count'),
+        )
+        .sort('winner', descending=True)
+        .pipe(pipe_rate_error, 'winner', 'count')
+        .with_columns(bust_pct=pl.col('busted') / 'rounds')
+        .style.fmt_percent([
+            'bust_pct',
+            'winner',
+            'winner_error',
+        ])
+        .fmt_number(['score', 'std_score'])
+    )
