@@ -70,6 +70,7 @@ class Deck:
 
     def deal(self, player: BasePlayer, card=None):
         if not self.cards:
+            #  print('shuffle')
             self.shuffle()
         if player.busted or player.stopped:
             return
@@ -78,6 +79,8 @@ class Deck:
         else:
             self.cards.remove(card)
         player.deal(card)
+        if not self.cards:
+            self.shuffle()
 
     def compute_card_probs(self):
         c = Counter(self.cards)
@@ -243,6 +246,9 @@ class ExpectedPlayer(BasePlayer):
         if game.check_late_game() and (self.check_leader(game) <= self.leader_gap):
             #   print('shifting threshold')
             threshold += self.threshold_shift
+        if len(self.cards) == 0 and res['expected_value'] < threshold:
+            print(game.deck.cards)
+            raise ValueError
         if res['expected_value'] > threshold:
             return True
         return False
@@ -377,7 +383,9 @@ class Game:
 
             # break ties
             if i > 20:
-                break
+                print(scores)
+                assert False, "Can't Break Tie"
+
             self.round_data.extend(self.play_round())
 
     def check_late_game(self):
