@@ -166,11 +166,19 @@ class BasePlayer:
             'bust_prob': bust_prob,
         }
 
-    def decide_hit(self):
+    def decide_hit(self, game: Game):
         pass
 
+    def check_leader(self, game: Game):
+        myscore = game.player_scores[self]['score']
+        leader = max([x['score'] for x in game.player_scores.values()])
 
-class SimplePlayer(BasePlayer):
+        return myscore - leader
+
+
+class PointThresholdPlayer(BasePlayer):
+    """Stop once greater or equal to a fixed point threshold per round, hit always on second chance card" """
+
     def __init__(self, threshold=25):
         super().__init__()
         self.threshold = threshold
@@ -178,7 +186,7 @@ class SimplePlayer(BasePlayer):
     def __repr__(self):
         return f'Point Threshold {self.threshold} {self.unique_hash}'
 
-    def decide_hit(self, deck):
+    def decide_hit(self, _):
         if 'second_chance' in self.cards:
             return True
         elif self.get_total_value() >= self.threshold:
@@ -186,7 +194,9 @@ class SimplePlayer(BasePlayer):
         return True
 
 
-class RandomPlayer(SimplePlayer):
+class RandomThresholdPlayer(PointThresholdPlayer):
+    """Every round different threshold"""
+
     def __repr__(self):
         return f'Random Player {self.unique_hash}'
 
@@ -199,7 +209,9 @@ class RandomPlayer(SimplePlayer):
         self.threshold = random.randint(1, 50)
 
 
-class CardThreshold(BasePlayer):
+class CardThresholdPlayer(BasePlayer):
+    """Stop after N cards"""
+
     def __init__(self, threshold=4):
         self.cards = []
         self.threshold = threshold
@@ -215,34 +227,44 @@ class CardThreshold(BasePlayer):
 
 class ExpectedPlayer(BasePlayer):
     def __repr__(self):
-        return f'Expected Value Player : {self.threshold} {self.unique_hash}'
+        return f'Expected Value Player : {self.threshold} {self.threshold_shift} {self.leader_gap} {self.unique_hash}'
 
-    def __init__(self, threshold=0):
+    def __init__(self, threshold=0, threshold_shift=0, leader_gap=200):
         super().__init__()
         self.threshold = threshold
+        self.threshold_shift = threshold_shift
+        self.leader_gap = leader_gap
 
-    def decide_hit(self, deck):
-        res = self.compute_expected_value(deck)
-        if res['expected_value'] > self.threshold:
+    def decide_hit(self, game):
+        res = self.compute_expected_value(game.deck)
+        threshold = self.threshold
+        if game.check_late_game() and (self.check_leader(game) <= self.leader_gap):
+            #   print('shifting threshold')
+            threshold += self.threshold_shift
+        if res['expected_value'] > threshold:
             return True
         return False
 
 
-class Cheater(BasePlayer):
+class CheaterPlayer(BasePlayer):
+    """Cheats and knows the next card."""
+
     def __init__(self):
         super().__init__()
 
     def __repr__(self):
         return f'Cheater {self.unique_hash}'
 
-    def decide_hit(self, deck):
-        assert deck, 'deck must not be empty'
-        if deck.cards[-1] in self.cards.intersection(norm_cards):
+    def decide_hit(self, game):
+        assert game.deck, 'deck must not be empty'
+        if game.deck.cards[-1] in self.cards.intersection(norm_cards):  # peeks at next card
             return False
         return True
 
 
 class Smartish(BasePlayer):
+    """Uses some simple rules based on expected value of a full deck to decide when to hit but ... doesn't do a great job."""
+
     def __init__(self, threshold=28):
         super().__init__()
         self.threshold = threshold
@@ -250,7 +272,7 @@ class Smartish(BasePlayer):
     def __repr__(self):
         return f'Smartish Player : {self.threshold} {self.unique_hash}'
 
-    def decide_hit(self, deck):
+    def decide_hit(self, game):
         if 'second_chance' in self.cards:
             return True
 
@@ -286,14 +308,14 @@ class Game:
         self.round_data = []
 
     def play_round(self):
-
+        # print(f' New round {self.round_num} & late game {self.check_late_game()}')
         while not all(p.stopped for p in self.player_scores.keys()):
             if any(p.flip7 for p in self.player_scores.keys()):
                 break
             for player, d in self.player_scores.items():
                 if player.stopped:
                     continue
-                if player.decide_hit(self.deck):
+                if player.decide_hit(self):
                     # print(f'Dealing to {player}')
                     self.deck.deal(player)
 
@@ -343,6 +365,11 @@ class Game:
         ):
             # break ties
             self.round_data.extend(self.play_round())
+
+    def check_late_game(self):
+        if max([x['score'] for x in self.player_scores.values()]) > 150:
+            return True
+        return False
 
     def simulate(self, n=100, save_round_data=False):
         out = []
@@ -407,6 +434,7 @@ def simulate_parallel(
     *game_args,
     **game_kwargs,
 ):
+    """future/parallel part I outsourced to ChatGPT, faster than my Game.simulate approach"""
     out = []
     all_round_data = []
 
