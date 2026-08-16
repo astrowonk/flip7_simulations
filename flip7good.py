@@ -239,8 +239,10 @@ class ExpectedPlayer(BasePlayer):
         self.leader_gap = leader_gap
 
     def decide_hit(self, game):
-        if len(self.cards) == 0:
-            return True
+        if (
+            len(self.cards) == 0
+        ):  # sometimes this bot wouldn't even take one card. I should probably change the deal logic
+            return True  # an empty deck returns 0s, and you must get at least 1 card per round
         res = self.compute_expected_value(game.deck)
         threshold = self.threshold
         if game.check_late_game() and (self.check_leader(game) <= self.leader_gap):
