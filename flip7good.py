@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import random
 from collections import Counter, defaultdict
-from secrets import token_urlsafe
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+from secrets import token_urlsafe
 
 from tqdm.autonotebook import tqdm
 
