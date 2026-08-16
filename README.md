@@ -3,7 +3,14 @@ This simulates the game Flip &. Draw 3 and Freeze behavior still to be implement
 Usage:
 
 ```python
-from flip7good import simulate_parallel,table_from_out,pipe_rate_error,Smartish,ExpectedPlayer,PointThresholdPlayer,Game
+
+from simulate import simulate_parallel
+from analysis import table_from_out
+from game import Game
+from players import PointThresholdPlayer,ExpectedPlayer
+
+
+
 player_list = [
     PointThresholdPlayer(25),
     PointThresholdPlayer(30),

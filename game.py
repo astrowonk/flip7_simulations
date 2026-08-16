@@ -253,8 +253,8 @@ class Game:
 
             self.round_data.extend(self.play_round())
 
-    def check_late_game(self):
-        if max([x['score'] for x in self.player_scores.values()]) > 150:
+    def check_late_game(self, threshold=150):
+        if max([x['score'] for x in self.player_scores.values()]) > threshold:
             return True
         return False
 
