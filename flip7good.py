@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections import Counter, defaultdict
 from secrets import token_urlsafe
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 from tqdm.autonotebook import tqdm
@@ -417,10 +417,6 @@ class Game:
                     round['game'] = i
                 all_round_data.extend(round_data)
         return out, all_round_data
-
-
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import random
 
 
 def _play_one(game_cls, game_args, game_kwargs, game_index, save_round_data, seed):
