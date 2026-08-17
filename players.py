@@ -40,7 +40,7 @@ class CardThresholdPlayer(BasePlayer):
     """Stop after N cards"""
 
     def __init__(self, threshold=4):
-        self.cards = []
+        super().__init__()
         self.threshold = threshold
 
     def __repr__(self):
@@ -96,7 +96,7 @@ class CheaterPlayer(BasePlayer):
         return True
 
 
-class Smartish(BasePlayer):
+class SmartishPlayer(BasePlayer):
     """Uses some simple rules based on expected value of a full deck to decide when to hit but ... doesn't do a great job."""
 
     def __init__(self, threshold=28):
@@ -110,6 +110,8 @@ class Smartish(BasePlayer):
         if 'second_chance' in self.cards:
             return True
 
+        # these rules are based on full deck probabilities and probalby aren't applicable beyond that which is why this bot
+        # doesn't perform that well?
         if len(self.cards.intersection({'11', '12'})) == 2:
             return False
         elif len(self.cards) <= 2:

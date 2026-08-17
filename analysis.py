@@ -28,9 +28,11 @@ def table_from_out(out):
         .agg(
             pl.col('winner').mean(),
             pl.col('rank').mean(),
+            pl.col('rank').le(2).mean().alias('Rank 1 or 2'),
             pl.col('rank').mode().first().alias('rank_mode'),
             # pl.col('winner').std().alias('std_winner'),
             pl.col('score').mean(),
+            (pl.col('score').mean() / pl.col('rounds').mean()).alias('Points per Round'),
             pl.col('score').std().alias('std_score'),
             pl.col('busted').sum(),
             pl.col('rounds').sum(),
@@ -43,6 +45,17 @@ def table_from_out(out):
             'bust_pct',
             'winner',
             'winner_error',
+            'Rank 1 or 2',
         ])
-        .fmt_number(['score', 'std_score'])
+        .fmt_number([
+            'score',
+            'std_score',
+            'Points per Round',
+        ])
+    )
+
+
+def round_df(round_data):
+    return pl.DataFrame(round_data).with_columns(
+        total=pl.col('score').cum_sum().over('player')
     )

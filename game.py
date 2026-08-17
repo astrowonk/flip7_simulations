@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from secrets import token_urlsafe
 
 from tqdm.autonotebook import tqdm
@@ -26,9 +26,12 @@ class BasePlayer:
 
     def __init__(self):
         self.cards = set()
+        self.card_history = []
         self.unique_hash = token_urlsafe(8)
+        self.frozen = True
 
     def deal(self, card):
+        self.card_history.append(card)
         if self.stopped:
             return
         if card in self.cards.intersection(norm_cards):
@@ -51,8 +54,10 @@ class BasePlayer:
         self.flip7 = False
         self.busted = False
         self.had_second_chance = False
+        self.frozen = False
 
         self.cards = set()
+        self.card_history = []
 
     def get_total_value(self):
         if self.busted:
@@ -77,7 +82,9 @@ class BasePlayer:
         elif card == 'x2':
             return sum(get_value(x) for x in self.cards if x in norm_cards) * 2
         elif card == 'second_chance':
-            return self.get_total_value() + 10
+            return (
+                self.get_total_value() + 15
+            )  # 15 is based on the simulation and how much the second chance card is worth per round
         else:
             return self.get_total_value() + get_value(card) * mult
 
@@ -109,8 +116,8 @@ class BasePlayer:
         return myscore - leader
 
 
-def make_deck():
-    return [
+def make_deck(use_freeze=True):
+    cards = [
         *['0'] * 1,
         *['1'] * 1,
         *['2'] * 2,
@@ -130,25 +137,28 @@ def make_deck():
         '+6',
         '+8',
         '+10',
-        *['freeze'] * 3,
         *['second_chance'] * 3,
         *['draw_3'] * 3,
     ]
+    if use_freeze:
+        cards += ['freeze'] * 3
+    return cards
 
 
 class Deck:
     cards = None
 
-    def __init__(self):
+    def __init__(self, use_freeze=True):
+        self.use_freeze = use_freeze
         self.shuffle()
 
     def shuffle(self):
         """Shuffle deck"""
         # print('Shuffling')
-        self.cards = make_deck()
+        self.cards = make_deck(self.use_freeze)
         random.shuffle(self.cards)
 
-    def deal(self, player: BasePlayer, card=None):
+    def deal(self, player: BasePlayer, game: Game, card=None):
         if not self.cards:
             #  print('shuffle')
             self.shuffle()
@@ -158,7 +168,15 @@ class Deck:
             card = self.cards.pop()
         else:
             self.cards.remove(card)
-        player.deal(card)
+        if card == 'freeze':
+            player.card_history.append('freeze')
+            frozen_player = game.decide_freeze(player)
+            frozen_player.stopped = True
+            frozen_player.frozen = True
+        #   print(f'{player} has frozen {frozen_player} in round {game.round_num}')
+
+        else:
+            player.deal(card)
         if not self.cards:
             self.shuffle()
 
@@ -169,28 +187,59 @@ class Deck:
 
 
 class Game:
-    def __init__(self, player_list: list[BasePlayer]):
-        self.player_list = player_list
+    def __init__(self, player_list: list[BasePlayer], use_freeze=True):
+        self.player_list = deque(player_list)
         self.round_data = []
         self.scoreboard = {str(x): 0 for x in player_list}
+        self.use_freeze = use_freeze
 
     def prep_game(self):
         self.player_scores = {player: defaultdict(int) for player in self.player_list}
-        self.deck = Deck()
+        self.deck = Deck(self.use_freeze)
         self.round_num = 1
         self.round_data = []
+
+    def decide_freeze(self, player: BasePlayer):
+        """decide who to freeze, need player so don't freeze self?"""
+
+        second_chance = sorted(
+            [
+                p
+                for p in self.player_list
+                if 'second_chance' in p.cards and p != player and not p.stopped
+            ],
+            key=lambda p: p.get_total_value(),
+        )
+        if second_chance:
+            #    print(f'second chance found for {second_chance[-1]}')
+            return second_chance[-1]
+        else:
+            top_players = sorted(
+                [
+                    player_tuple
+                    for player_tuple in self.player_scores.items()
+                    if not player_tuple[0].stopped and (player_tuple[0] != player)
+                ],
+                key=lambda x: x[1]['score'] + x[0].get_total_value(),
+            )
+            if top_players:
+                #      print(f'top player is {top_players[-1][0]}')
+                return top_players[-1][0]
+
+        #    print('must self freeze')
+        return player
 
     def play_round(self):
         # print(f' New round {self.round_num} & late game {self.check_late_game()}')
         while not all(p.stopped for p in self.player_scores.keys()):
             if any(p.flip7 for p in self.player_scores.keys()):
                 break
-            for player, d in self.player_scores.items():
+            for player in self.player_list:
                 if player.stopped:
                     continue
                 if player.decide_hit(self):
                     # print(f'Dealing to {player}')
-                    self.deck.deal(player)
+                    self.deck.deal(player, self)
 
                     #      print(player.cards)
                     if 'second_chance' in player.cards:
@@ -211,10 +260,13 @@ class Game:
                 'score': player.get_total_value(),
                 'second_chance_flag': player.had_second_chance,
                 'busted': player.busted,
+                'stopped': player.stopped,
+                'frozen': player.frozen,
                 'round': self.round_num,
                 'flip7': player.flip7,
                 'hand_size': len(player.cards),
                 'hand': ','.join(player.cards),
+                'card_history': ','.join(player.card_history),
             })
             player.new_round()
 
@@ -229,7 +281,10 @@ class Game:
             score < 200 for score in [val['score'] for val in self.player_scores.values()]
         ):
             i += 1
+            #   print(f'First player to play is {self.player_list[0]}')
+
             self.round_data.extend(self.play_round())
+            self.player_list.rotate()
             if i > 50:
                 break
 
@@ -252,6 +307,8 @@ class Game:
                 assert False, "Can't Break Tie"
 
             self.round_data.extend(self.play_round())
+            self.player_list.rotate()
+        #  print(f'First player to play is {self.player_list[0]}')
 
     def check_late_game(self, threshold=150):
         if max([x['score'] for x in self.player_scores.values()]) > threshold:
